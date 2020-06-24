@@ -4,7 +4,7 @@ using System.IO;
 using System.Net;
 using System.Text.Json;
 using System.Threading;
-using BillyUtils;
+using BillyUtils.WebHelpers;
 
 namespace deck_downloader {
     class Program {
@@ -41,10 +41,6 @@ namespace deck_downloader {
 
             var ids = LoadFile();
 
-            // foreach (var id in ids) {
-            //     Console.WriteLine(id);
-            // }
-
             Download(ids);
         }
 
@@ -56,7 +52,6 @@ namespace deck_downloader {
 
             var cardData = DownloadCardData(ids, true, downloadDir);
             DownloadImgs(cardData, false, true, downloadDir);
-            // Console.WriteLine(JsonSerializer.Serialize(cardData, serializerOptions));
 
         }
 
@@ -72,20 +67,31 @@ namespace deck_downloader {
             }
 
             foreach (var card in cards) {
+                Console.Write("\r                                                                                                                 ");
+                Console.Write($"\rDownloading the image of the card with id {card.id}...");
+
+                var data = Downloader.DownloadBytes(card.image_url);
+
                 if (returnB64) {
-                    var wc = new WebClient();
-                    var data = wc.DownloadData(card.image_url);
                     b64.Add(Convert.ToBase64String(data));
                 }
                 if (writeToFile) {
-                    var wc = new WebClient();
                     var dlPath = Path.Join(downloadDir, $"{card.id}.jpg");
-                    File.Create(dlPath).Close();
-                    wc.DownloadFile(card.image_url, dlPath);
+                    using(var fs = File.Open(dlPath, FileMode.OpenOrCreate)) {
+                        fs.Write(data, 0, data.Length);
+                    }
                 }
 
                 Thread.Sleep(500);
+                Console.Write(" Done!");
             }
+
+            Console.Write("\r                                                                                                                 ");
+            Console.Write($"\rImage download finished.");
+            if(writeToFile){
+                Console.Write($" {downloadDir}");
+            }
+            Console.WriteLine();
 
             if (returnB64)
                 return b64.ToArray();
@@ -101,17 +107,18 @@ namespace deck_downloader {
             var resultData = new List<Card>();
 
             foreach (var id in ids) {
+                Console.Write("\r                                                                                                                 ");
+                Console.Write($"\rDownloading data of the card with id {id.Key}...");
+
                 string response;
                 try {
-                    response = HTTPRequest.GET(cardDataURL + id.Key).Result;
+                    response = HTTPRequest.GET(cardDataURL + id.Key);
                 } catch (System.Exception e) {
-                    Console.WriteLine($"Exception generated during the request of the id {id}");
+                    Console.WriteLine($"Exception generated during the request of the id {id}. Is the id valid?");
                     Console.WriteLine(e);
-                    Environment.Exit(1);
                     continue;
                 }
 
-                Console.WriteLine($"Parsing card with id {id.Key}");
                 JsonElement obj = JsonSerializer.Deserialize<JsonElement>(response);
 
                 var fail = obj.TryGetProperty("error", out var error);
@@ -150,16 +157,23 @@ namespace deck_downloader {
 
                     //Console.WriteLine(JsonSerializer.Serialize(result));
                     resultData.Add(result);
-                    Console.WriteLine("Done");
+                    Console.Write(" Done!");
 
                 }
 
                 Thread.Sleep(500);
             }
 
-            using(var sw = new StreamWriter(File.Open(Path.Join(folderPath, "card_data.json"), FileMode.OpenOrCreate))) {
-                sw.Write(JsonSerializer.Serialize(resultData.ToArray(), serializerOptions));
+            if (writeToFile) {
+                using(var sw = new StreamWriter(File.Open(Path.Join(folderPath, "card_data.json"), FileMode.OpenOrCreate))) {
+                    sw.Write(JsonSerializer.Serialize(resultData.ToArray(), serializerOptions));
+                }
             }
+            Console.Write("\r                                                                                                                 ");
+            Console.Write("\rThe download of card datas has ended.");
+            if(writeToFile)
+                Console.Write($" {Path.Join(folderPath, "card_data.json")}");
+            Console.WriteLine();
             return resultData.ToArray();
         }
 
