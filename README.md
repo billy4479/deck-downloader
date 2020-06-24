@@ -16,5 +16,7 @@ You can easly generate one using applications like YgoDeck app available on Andr
 
 The output of this app will be saved in ```./downloaded```
 
+This app won't separate your Main Deck from th Extra Deck or the Side Deck.
+
 ## License
 This software is under MIT License. For further information view the [LICENSE file](LICENSE).
