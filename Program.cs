@@ -1,17 +1,23 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Net;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Unicode;
 using System.Threading;
 using BillyUtils.WebHelpers;
 
 namespace deck_downloader {
     class Program {
         const string cardDataURL = "https://db.ygoprodeck.com/api/v7/cardinfo.php?id=";
+        static bool useDefuault = false;
+        static bool pdfOnly = false;
+        static bool noImg = false;
+        static bool noPdf = false;
         static JsonSerializerOptions serializerOptions = new JsonSerializerOptions {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = true
+            WriteIndented = true,
+            Encoder = JavaScriptEncoder.Create(UnicodeRanges.BasicLatin)
         };
 
         [Serializable]
@@ -21,6 +27,7 @@ namespace deck_downloader {
             public string name { get; set; }
             public int level { get; set; }
             public string image_url { get; set; }
+            public string image_path { get; set; }
             public string cardType { get; set; }
             public string type { get; set; }
             public string attribute { get; set; }
@@ -37,26 +44,96 @@ namespace deck_downloader {
             Console.WriteLine("*                                                                               *");
             Console.WriteLine("* You can find the code on Github: https://github.com/billy4479/deck-downloader *");
             Console.WriteLine("* Powered by the awesome YGOPRODeck API: https://ygoprodeck.com                 *");
+            Console.WriteLine("* PDF Framework: iText7 https://itextpdf.com                                    *");
             Console.WriteLine("*********************************************************************************\n");
 
-            var ids = LoadFile();
+            //Args parsing
+            foreach (var arg in args) {
+                switch (arg) {
+                    case "-y":
+                        useDefuault = true;
+                        break;
+                    case "--help":
+                        Console.WriteLine("\n\t-y\tRun in batch mode, no input from user is required.\n\t--help\tShow this screen");
+                        return;
+                    default:
+                        Console.WriteLine($"Invalid argumant: {arg}. Use --help for more informations");
+                        return;
+                }
+            }
 
-            Download(ids);
+            if (!useDefuault) {
+                Console.Write("Mode: \n\t0. Everything (default)\n\t1. PDF Only (no internet required)\n\t2. No PDF\n\t3. No images\nEnter mode: ");
+                var choise = Console.ReadKey().KeyChar;
+                switch (choise) {
+                    case '0':
+                        break;
+                    case '1':
+                        pdfOnly = true;
+                        break;
+                    case '2':
+                        noPdf = true;
+                        break;
+                    case '3':
+                        noImg = true;
+                        break;
+                    default:
+                        Console.WriteLine("\nInvalid mode.");
+                        Environment.Exit(5);
+                        break;
+                }
+            }
+            Console.WriteLine();
+            
+            Dictionary<string, int> imageDatas = null;
+            if (!pdfOnly) {
+                var ids = LoadFile();
+                imageDatas = Download(ids);
+            } else {
+                var jsonPath = Path.Join(AppDomain.CurrentDomain.BaseDirectory, "downloaded", "card_data.json");
+                string json;
+
+                using(var sr = new StreamReader(File.OpenRead(jsonPath))) {
+                    json = sr.ReadToEnd();
+                }
+
+                var cardData = JsonSerializer.Deserialize<Card[]>(json, serializerOptions);
+                imageDatas = new Dictionary<string, int>();
+
+                foreach (var card in cardData) {
+                    using(var fs = File.OpenRead(card.image_path)) {
+                        byte[] output = new byte[fs.Length];
+                        fs.Read(output, 0, (int) fs.Length);
+                        imageDatas.Add(Convert.ToBase64String(output), card.count);
+                    }
+                }
+
+            }
+
+            if (!noPdf && !noImg)
+                PDFCreator.CreatePDF(Path.Join(AppDomain.CurrentDomain.BaseDirectory, "downloaded", "document.pdf"), imageDatas);
         }
 
-        static void Download(Dictionary<int, int> ids) {
+        static Dictionary<string, int> Download(Dictionary<int, int> ids) {
             string downloadDir = Path.Join(AppDomain.CurrentDomain.BaseDirectory, "downloaded");
             if (!Directory.Exists(downloadDir)) {
                 Directory.CreateDirectory(downloadDir);
             }
 
             var cardData = DownloadCardData(ids, true, downloadDir);
-            DownloadImgs(cardData, false, true, downloadDir);
-
+            if (noImg)
+                return null;
+            var imgs = DownloadImgs(cardData, true, true, downloadDir);
+            var dict = new Dictionary<string, int>();
+            int i = 0;
+            foreach (var card in ids) {
+                dict.Add(imgs[i], card.Value);
+                i++;
+            }
+            return dict;
         }
 
         static string[] DownloadImgs(Card[] cards, bool returnB64 = true, bool writeToFile = false, string downloadDir = "") {
-
             List<string> b64 = new List<string>();
             if (writeToFile && string.IsNullOrEmpty(downloadDir)) {
                 throw new ArgumentException("If writeToFile is true, downloadDir must be specified");
@@ -88,7 +165,7 @@ namespace deck_downloader {
 
             Console.Write("\r                                                                                                                 ");
             Console.Write($"\rImage download finished.");
-            if(writeToFile){
+            if (writeToFile) {
                 Console.Write($" {downloadDir}");
             }
             Console.WriteLine();
@@ -154,6 +231,7 @@ namespace deck_downloader {
                     var images = wCard.GetProperty("card_images").EnumerateArray();
                     images.MoveNext();
                     result.image_url = images.Current.GetProperty("image_url").GetString();
+                    result.image_path = Path.Join(folderPath, "images", $"{result.id}.jpg");
 
                     //Console.WriteLine(JsonSerializer.Serialize(result));
                     resultData.Add(result);
@@ -171,16 +249,19 @@ namespace deck_downloader {
             }
             Console.Write("\r                                                                                                                 ");
             Console.Write("\rThe download of card datas has ended.");
-            if(writeToFile)
+            if (writeToFile)
                 Console.Write($" {Path.Join(folderPath, "card_data.json")}");
             Console.WriteLine();
             return resultData.ToArray();
         }
 
         static Dictionary<int, int> LoadFile() {
-            Console.Write("Enter the path to path to the file containing the IDs (default is ./deck.ydk): ");
-            string pathToYDK = Console.ReadLine();
-            if (pathToYDK == "") {
+            string pathToYDK = null;
+            if (!useDefuault) {
+                Console.Write("Enter the path to path to the file containing the IDs (default is ./deck.ydk): ");
+                pathToYDK = Console.ReadLine();
+            }
+            if (string.IsNullOrEmpty(pathToYDK)) {
                 pathToYDK = AppDomain.CurrentDomain.BaseDirectory + "/deck.ydk";
             }
 
