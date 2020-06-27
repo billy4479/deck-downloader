@@ -6,4 +6,8 @@
     <RootNamespace>deck_downloader</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="itext7" Version="7.1.11" />
+  </ItemGroup>
+
 </Project>
