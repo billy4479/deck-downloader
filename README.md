@@ -20,4 +20,4 @@ The output of this app will be saved in ```./downloaded```
 This app won't separate your Main Deck from th Extra Deck or the Side Deck.
 
 ## License
-This software is under MIT License. For further information view the [LICENSE file](LICENSE).
+This software is under GNU AGPLv3 License. For further information view the [LICENSE file](LICENSE).
