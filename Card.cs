@@ -15,6 +15,8 @@ namespace deck_downloader {
         public string description { get; set; }
         public int atk { get; set; }
         public int def { get; set; }
+        public int link_level { get; set; }
+        public string[] link_markers { get; set; }
     }
 
 }

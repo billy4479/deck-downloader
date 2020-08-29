@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Unicode;
@@ -12,34 +13,36 @@ namespace deck_downloader {
 
     static internal class DownloadHelper {
         const string cardDataURL = "https://db.ygoprodeck.com/api/v7/cardinfo.php?id=";
-        public static readonly string folderPath = Path.Join (AppDomain.CurrentDomain.BaseDirectory, "downloaded");
-        public static readonly string imagePath = Path.Join (folderPath, "images");
-        public static readonly string jsonPath = Path.Join (folderPath, "data.json");
+        public static readonly string folderPath = Path.Join(AppDomain.CurrentDomain.BaseDirectory, "downloaded");
+        public static readonly string imagePath = Path.Join(folderPath, "images");
+        public static readonly string jsonPath = Path.Join(folderPath, "data.json");
         public static readonly JsonSerializerOptions serializerOptions = new JsonSerializerOptions {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = true,
-            Encoder = JavaScriptEncoder.Create (UnicodeRanges.BasicLatin)
+            Encoder = JavaScriptEncoder.Create(UnicodeRanges.BasicLatin)
         };
 
-        public static Card[] DownloadAll (DLMode mode, Dictionary<int, int> ids) {
-            Directory.CreateDirectory (folderPath);
-            Directory.CreateDirectory (imagePath);
+        public static Card[] DownloadAll(DLMode mode, Dictionary<int, int> ids) {
+            Directory.CreateDirectory(folderPath);
+            Directory.CreateDirectory(imagePath);
             Card[] cards = null;
             try {
-                var JSON = DownloadJSON (ids);
+                var JSON = DownloadJSON(ids);
                 Console.WriteLine("Done!                                                         ");
-                cards = ParseJSON (JSON);
-            } catch (System.Exception) {
-                Console.WriteLine ($"Exception while downloading cards data");
+                cards = ParseJSON(JSON);
+            } catch {
+                Console.WriteLine($"Exception while downloading cards data");
+                Environment.Exit(1);
             }
 
             if (mode != DLMode.JSON) {
                 foreach (var card in cards) {
                     try {
-                        DownloadImage (card);
-                        Thread.Sleep (200);
-                    } catch (System.Exception) {
-                        Console.WriteLine ($"Exception while downloading the image of the card with id {card.id}");
+                        DownloadImage(card);
+                        Thread.Sleep(200);
+                    } catch {
+                        Console.WriteLine($"Exception while downloading the image of the card with id {card.id}");
+                        Environment.Exit(1);
                     }
                 }
                 Console.WriteLine("Done!                                                        ");
@@ -48,65 +51,82 @@ namespace deck_downloader {
             return cards;
         }
 
-        private static Card[] ParseJSON (Dictionary<string, int> input) {
-            var result = new List<Card> ();
-            Console.WriteLine ($"Parsing data...");
+        private static Card[] ParseJSON(Dictionary<string, int> input) {
+            var result = new List<Card>();
+            Console.WriteLine($"Parsing data...");
             foreach (var jsonStr in input) {
-                JsonElement obj = JsonSerializer.Deserialize<JsonElement> (jsonStr.Key);
-                var data = obj.GetProperty ("data");
-                var arr = data.EnumerateArray ();
-                arr.MoveNext ();
-                var wCard = arr.Current;
+                try {
+                    JsonElement obj = JsonSerializer.Deserialize<JsonElement>(jsonStr.Key);
+                    var data = obj.GetProperty("data");
+                    var arr = data.EnumerateArray();
+                    arr.MoveNext();
+                    var wCard = arr.Current;
 
-                var tmp = new Card ();
+                    var tmp = new Card();
 
-                tmp.id = wCard.GetProperty ("id").GetInt32 ();
-                tmp.name = wCard.GetProperty ("name").GetString ();
-                tmp.cardType = wCard.GetProperty ("type").GetString ();
-                tmp.description = wCard.GetProperty ("desc").GetString ();
+                    tmp.id = wCard.GetProperty("id").GetInt32();
+                    tmp.name = wCard.GetProperty("name").GetString();
+                    tmp.cardType = wCard.GetProperty("type").GetString();
+                    tmp.description = wCard.GetProperty("desc").GetString();
 
-                tmp.count = jsonStr.Value;
+                    tmp.count = jsonStr.Value;
 
-                //Monster-only props
-                if (tmp.cardType.Contains ("Monster")) {
-                    tmp.atk = wCard.GetProperty ("atk").GetInt32 ();
-                    tmp.def = wCard.GetProperty ("def").GetInt32 ();
-                    tmp.level = wCard.GetProperty ("level").GetInt32 ();
-                    tmp.type = wCard.GetProperty ("race").GetString ();
-                    tmp.attribute = wCard.GetProperty ("attribute").GetString ();
+                    //Monster-only props
+                    if (tmp.cardType.Contains("Monster")) {
+                        tmp.atk = wCard.GetProperty("atk").GetInt32();
+                        if (tmp.cardType.Contains("Link")) {
+                            tmp.link_level = wCard.GetProperty("linkval").GetInt32();
+                            var markArr = wCard.GetProperty("linkmarkers").EnumerateArray();
+                            var markList = new List<JsonElement>(markArr);
+                            tmp.link_markers = new string[markList.Count];
+                            for (int i = 0; i < markList.Count; i++) {
+                                tmp.link_markers[i] = markList[i].GetString();
+                            }
+                            markArr.Dispose();
+                        } else {
+                            tmp.def = wCard.GetProperty("def").GetInt32();
+                            tmp.level = wCard.GetProperty("level").GetInt32();
+                        }
+                        tmp.type = wCard.GetProperty("race").GetString();
+                        tmp.attribute = wCard.GetProperty("attribute").GetString();
+                    }
+
+                    //Image
+                    var images = wCard.GetProperty("card_images").EnumerateArray();
+                    images.MoveNext();
+                    tmp.image_url = images.Current.GetProperty("image_url").GetString();
+                    tmp.image_path = Path.Join(imagePath, $"{tmp.id}.jpg");
+                    result.Add(tmp);
+                    arr.Dispose();
+                } catch (Exception e) {
+                    Console.WriteLine($"Exception while parsing JSON data:\n{e.Message}\t{e.TargetSite}\n{Convert.ToBase64String(Encoding.UTF8.GetBytes(jsonStr.Key))}\n");
+                    Environment.Exit(1);
+
                 }
-
-                //Image
-                var images = wCard.GetProperty ("card_images").EnumerateArray ();
-                images.MoveNext ();
-                tmp.image_url = images.Current.GetProperty ("image_url").GetString ();
-                tmp.image_path = Path.Join (imagePath, $"{tmp.id}.jpg");
-                result.Add (tmp);
-                arr.Dispose ();
             }
-            var json = JsonSerializer.Serialize (result, serializerOptions);
-            using (var sw = new StreamWriter (File.Open (jsonPath, FileMode.OpenOrCreate))) {
-                sw.WriteLine (json);
+            var json = JsonSerializer.Serialize(result, serializerOptions);
+            using(var sw = new StreamWriter(File.Open(jsonPath, FileMode.OpenOrCreate))) {
+                sw.WriteLine(json);
             }
-            return result.ToArray ();
+            return result.ToArray();
         }
 
         //Returns a dictionary with as key the json string and as value the count
-        private static Dictionary<string, int> DownloadJSON (Dictionary<int, int> ids) {
-            var result = new Dictionary<string, int> ();
+        private static Dictionary<string, int> DownloadJSON(Dictionary<int, int> ids) {
+            var result = new Dictionary<string, int>();
             foreach (var id in ids) {
-                Console.Write ($"Downloading data of card {id.Key}...   \r");
-                result.Add (HTTPRequest.GET (cardDataURL + id.Key), id.Value);
-                Thread.Sleep (200);
+                Console.Write($"Downloading data of card {id.Key}...   \r");
+                result.Add(HTTPRequest.GET(cardDataURL + id.Key), id.Value);
+                Thread.Sleep(200);
             }
             return result;
         }
 
-        private static void DownloadImage (Card card) {
-            Console.Write ($"Downloading image of card {card.id}...   \r");
-            var img = Downloader.DownloadBytes (card.image_url);
-            using (var fs = File.Open (card.image_path, FileMode.OpenOrCreate)) {
-                fs.Write (img, 0, img.Length);
+        private static void DownloadImage(Card card) {
+            Console.Write($"Downloading image of card {card.id}...   \r");
+            var img = Downloader.DownloadBytes(card.image_url);
+            using(var fs = File.Open(card.image_path, FileMode.OpenOrCreate)) {
+                fs.Write(img, 0, img.Length);
             }
         }
     }
